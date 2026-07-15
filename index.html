@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <!-- Replace the MediaPipe script tags in your index.html with these: -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- Live Action Streams -->
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="output-canvas"></canvas>
+
+        <!-- Prompt Layer -->
+        <div id="ui-overlay">
+            <h1 id="instruction-text">Loading Assets...</h1>
+        </div>
+
+        <!-- Snap Interaction Action Button -->
+        <button id="capture-btn" class="hidden">Capture Polaroid 📸</button>
+    </div>
+
+    <!-- Polaroid Render Popup -->
+    <div id="polaroid-modal" class="hidden">
+        <div class="modal-content">
+            <span id="close-modal">&times;</span>
+            <div id="polaroid-wrapper">
+                <canvas id="polaroid-canvas"></canvas>
+                <div class="polaroid-caption">graduATE</div>
+            </div>
+            <button id="save-btn">Save to Device 💾</button>
+        </div>
+    </div>
+
+    <!-- Application Script Bindings -->
+    <script src="bodytracking.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
