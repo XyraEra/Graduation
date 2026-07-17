@@ -1,171 +1,629 @@
+/* =============================================================================
+   GraduATE — style.css
+   -----------------------------------------------------------------------------
+   Design concept: a graduation held after dark — black-tie ceremony black,
+   foil-stamped gold (the tassel, the seal, the diploma ribbon), and parchment
+   cream. One signature element carries all the boldness: the ceremony
+   progress path in the game screen, where a lit gold spark physically
+   travels from "Gown" to "Cap" to "Degree" to "Dance" as the player earns
+   each stage — because that path IS the real structure of this experience,
+   not decoration bolted on top of it. Everything else — banners, cards,
+   buttons — stays quiet and gets out of the way of the player's own camera.
+
+   Tokens
+     --ink          page background (near-black, slight warmth)
+     --ink-card     elevated panel background
+     --gold         primary accent — buttons, borders, the progress path
+     --gold-bright  hover/glow highlight gold
+     --gold-deep    shadows / recessed gold
+     --parchment    cream — polaroid stock, light text on dark
+     --ribbon       deep rose-red — reserved for the one "something's wrong" state
+   ============================================================================= */
+
+/* ---------------------------------------------------------------------------
+   0. Reset & tokens
+   --------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
 :root {
-    --gold: #d4af37;
-    --dark: #111111;
-    --white: #ffffff;
+  --ink: #0b0a10;
+  --ink-card: #18141f;
+  --gold: #d6a53a;
+  --gold-bright: #f4cc63;
+  --gold-deep: #7c5c1e;
+  --parchment: #f4ecd8;
+  --ribbon: #a13b4d;
+
+  --text-soft: #efe8da;      /* body text on dark */
+  --text-dim: #b8b0a4;       /* secondary/hint text on dark */
+
+  --font-display: "Fraunces", Georgia, serif;
+  --font-script: "Caveat", cursive;
+  --font-body: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --radius-md: 14px;
+  --radius-lg: 26px;
+  --shadow-card: 0 30px 60px -20px rgba(0, 0, 0, 0.6);
+  --shadow-gold-glow: 0 0 0 1px rgba(214, 165, 58, 0.35), 0 0 32px rgba(214, 165, 58, 0.18);
+
+  color-scheme: dark;
 }
 
-body {
-    margin: 0;
-    padding: 0;
-    background-color: #1a1a1a;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    overflow: hidden;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
+/* A native `hidden` attribute must always win, no matter what class rules
+   exist elsewhere — otherwise a later `.icon-btn { display:flex }` style
+   would silently un-hide #btn-photo before game.js means to reveal it. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--ink);
+  color: var(--text-soft);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
 }
 
-#game-container {
-    position: relative;
-    width: 100vw;
-    height: 100vh;
-    max-width: 1280px;
-    max-height: 720px;
-    aspect-ratio: 16/9;
-    background: #000;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-    overflow: hidden;
+button, .btn {
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
 }
 
-/* Mirror the feed for standard UX expectations */
-#webcam, #output-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    transform: scaleX(-1);
-    object-fit: cover;
+ul, ol { list-style: none; margin: 0; padding: 0; }
+p { margin: 0; }
+
+.noscript-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  background: var(--ink);
+  color: var(--parchment);
+  font-family: var(--font-body);
 }
 
-#output-canvas {
-    z-index: 2;
+/* ---------------------------------------------------------------------------
+   1. App shell & screen transitions
+   --------------------------------------------------------------------------- */
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
 }
 
-#webcam {
-    z-index: 1;
-    opacity: 0; /* Hidden but processing natively */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  padding: max(2rem, env(safe-area-inset-top)) max(2rem, env(safe-area-inset-right))
+           max(2rem, env(safe-area-inset-bottom)) max(2rem, env(safe-area-inset-left));
+  overflow-y: auto;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.45s ease;
 }
 
-/* Prompt Layer */
-#ui-overlay {
-    position: absolute;
-    top: 10%;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-    text-align: center;
-    pointer-events: none;
+.screen.active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
-#instruction-text {
-    color: var(--white);
-    font-size: 3.5rem;
-    text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0,0,0,0.8), 0 0 20px var(--gold);
-    margin: 0;
-    animation: pulse 1.5s infinite alternate;
+/* Faint constellation of static gold flecks behind the card screens — ambient,
+   not the signature, so it stays still (a slow twinkle only, nothing bigger). */
+#screen-start, #screen-error {
+  background:
+    radial-gradient(1px 1px at 12% 20%, var(--gold) 0%, transparent 60%),
+    radial-gradient(1px 1px at 78% 15%, var(--gold) 0%, transparent 60%),
+    radial-gradient(1.5px 1.5px at 85% 70%, var(--gold) 0%, transparent 60%),
+    radial-gradient(1px 1px at 22% 82%, var(--gold) 0%, transparent 60%),
+    radial-gradient(1px 1px at 55% 45%, var(--gold) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 0%, #221a2c 0%, var(--ink) 60%);
+  background-color: var(--ink);
 }
 
-/* Capture Action Interface */
-#capture-btn {
-    position: absolute;
-    bottom: 40px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-    padding: 15px 35px;
-    font-size: 1.2rem;
-    font-weight: bold;
-    color: var(--dark);
-    background: linear-gradient(45deg, var(--gold), #fff3a8);
-    border: none;
-    border-radius: 50px;
-    cursor: pointer;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.3);
-    transition: all 0.2s ease;
+/* ---------------------------------------------------------------------------
+   2. Shared components — buttons, cards
+   --------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.9rem 2rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-#capture-btn:hover {
-    transform: translateX(-50%) scale(1.05);
-    box-shadow: 0 12px 25px rgba(212, 175, 55, 0.4);
+.btn:active { transform: translateY(1px) scale(0.98); }
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  color: #221a0a;
+  box-shadow: 0 12px 24px -10px rgba(214, 165, 58, 0.55);
+}
+.btn-primary:hover { box-shadow: 0 16px 30px -8px rgba(214, 165, 58, 0.7); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-soft);
+  border-color: rgba(239, 232, 218, 0.35);
+}
+.btn-secondary:hover { border-color: var(--gold); color: var(--gold-bright); }
+
+button:focus-visible, .btn:focus-visible, a:focus-visible {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 3px;
 }
 
-/* Polaroid Modal Overlay */
-#polaroid-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0,0,0,0.85);
-    z-index: 100;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+.icon-btn {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 1px solid rgba(244, 236, 216, 0.25);
+  background: rgba(11, 10, 16, 0.55);
+  backdrop-filter: blur(10px);
+  color: var(--text-soft);
+  font-size: 1.15rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.icon-btn:hover { border-color: var(--gold); transform: translateY(-2px); }
+.icon-btn:active { transform: translateY(0) scale(0.95); }
+
+.icon-btn-primary {
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  border-color: transparent;
+  color: #221a0a;
+  box-shadow: 0 10px 22px -8px rgba(214, 165, 58, 0.65);
+}
+.icon-btn-primary:hover { border-color: transparent; }
+
+/* ---------------------------------------------------------------------------
+   3. Screen 1 — Start
+   --------------------------------------------------------------------------- */
+.start-card {
+  max-width: 30rem;
+  width: 100%;
+  text-align: center;
+  background: linear-gradient(180deg, var(--ink-card), rgba(24, 20, 31, 0.6));
+  border: 1px solid rgba(214, 165, 58, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 3rem 2.25rem 2.5rem;
+  box-shadow: var(--shadow-card);
 }
 
-.modal-content {
-    background: transparent;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
+.eyebrow {
+  font-size: 0.78rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold-bright);
+  margin-bottom: 0.75rem;
 }
 
-#close-modal {
-    position: absolute;
-    top: -40px;
-    right: 0;
-    color: #fff;
-    font-size: 2.5rem;
-    cursor: pointer;
+.wordmark {
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(2.6rem, 8vw, 3.6rem);
+  line-height: 1;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold) 70%, var(--gold-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wordmark .ate {
+  font-family: var(--font-script);
+  font-weight: 700;
+  font-size: 1.25em;
+  padding-left: 0.05em;
 }
 
-/* Polaroid Canvas Wrap Layout */
-#polaroid-wrapper {
-    background: white;
-    padding: 20px 20px 60px 20px;
-    box-shadow: 0 25px 50px rgba(0,0,0,0.4);
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+.start-copy {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 1.75rem;
+}
+
+.start-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  text-align: left;
+  margin-bottom: 2rem;
+  padding: 1.1rem 1.3rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(244, 236, 216, 0.08);
+  border-radius: var(--radius-md);
+}
+.start-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.92rem;
+  color: var(--text-soft);
+}
+.step-num {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #221a0a;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+}
+
+.privacy-note {
+  margin-top: 1.1rem;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+
+/* ---------------------------------------------------------------------------
+   4. Screen 2 — Loading
+   --------------------------------------------------------------------------- */
+.loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+/* The real Cap.png asset doubles as the loading indicator — a gentle toss-
+   and-settle instead of a generic spinner ring. */
+.cap-spinner {
+  width: 84px;
+  height: 84px;
+  background-image: url("Assets/Cap.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  filter: drop-shadow(0 10px 18px rgba(214, 165, 58, 0.35));
+  animation: cap-toss 1.6s ease-in-out infinite;
+}
+
+#loading-message {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+
+/* ---------------------------------------------------------------------------
+   5. Screen 3 — Live game stage
+   --------------------------------------------------------------------------- */
+#screen-game { padding: 0; }
+#screen-game.active { display: flex; }
+
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+}
+
+.source-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#camera-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+#camera-flash.flash-active { animation: shutter-flash 0.5s ease-out; }
+
+.hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.hud-top {
+  top: max(1.75rem, env(safe-area-inset-top));
+  padding: 0 1rem;
+}
+
+.prompt-banner {
+  pointer-events: none;
+  text-align: center;
+  padding: 0.85rem 2rem;
+  background: rgba(11, 10, 16, 0.72);
+  backdrop-filter: blur(10px);
+  border-top: 2px solid var(--gold);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  max-width: min(92vw, 30rem);
+}
+#prompt-text {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(1.4rem, 4vw, 2rem);
+  color: var(--parchment);
+  letter-spacing: 0.01em;
+}
+#prompt-hint {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* --- The signature element: the ceremony progress path -------------------
+   A literal processional line the player advances along, stage by stage.
+   game.js sets --progress (0 → 1) on #stage-progress to fill the gold
+   track, and toggles .active / .done on each .dot as stages are reached. */
+.stage-progress {
+  --progress: 0;
+  position: absolute;
+  top: 8.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 3.25rem;
+  padding: 0 0.5rem;
+}
+
+.stage-progress::before,
+.stage-progress::after {
+  content: "";
+  position: absolute;
+  top: 0.5rem;
+  left: 1rem;
+  right: 1rem;
+  height: 2px;
+  border-radius: 2px;
+}
+.stage-progress::before {
+  background: rgba(244, 236, 216, 0.18);
+}
+.stage-progress::after {
+  width: calc((100% - 2rem) * var(--progress));
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold-bright));
+  box-shadow: 0 0 10px rgba(244, 204, 99, 0.7);
+  transition: width 0.5s ease;
+}
+
+.dot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dot::before {
+  content: "";
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid rgba(244, 236, 216, 0.35);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.dot span {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.dot.done::before {
+  background: var(--gold);
+  border-color: var(--gold-bright);
+}
+.dot.done span { color: var(--gold-bright); }
+
+.dot.active::before {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 0 rgba(244, 204, 99, 0.6);
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+.dot.active span { color: var(--parchment); }
+
+.no-person-hint {
+  position: absolute;
+  bottom: max(6.5rem, calc(env(safe-area-inset-bottom) + 6.5rem));
+  left: 50%;
+  transform: translate(-50%, 0.5rem);
+  padding: 0.65rem 1.4rem;
+  background: rgba(161, 59, 77, 0.85);
+  color: var(--parchment);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.no-person-hint.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-controls {
+  top: auto;
+  bottom: max(1.75rem, env(safe-area-inset-bottom));
+  right: max(1.75rem, env(safe-area-inset-right));
+  left: auto;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+.hud-controls .icon-btn { pointer-events: auto; }
+
+#btn-mute .icon-off { display: none; }
+#btn-mute[aria-pressed="true"] .icon-on { display: none; }
+#btn-mute[aria-pressed="true"] .icon-off { display: inline; }
+
+/* ---------------------------------------------------------------------------
+   6. Screen 4 — Polaroid photo
+   --------------------------------------------------------------------------- */
+.photo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+}
+
+.polaroid {
+  position: relative;
+  background: var(--parchment);
+  padding: 1rem 1rem 3.75rem;
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+  transform: rotate(-2.5deg);
+  animation: polaroid-drop 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* A little strip of "tape" — quiet, static, sets the scene without competing
+   with the progress path back on the game screen. */
+.polaroid::before {
+  content: "";
+  position: absolute;
+  top: -0.9rem;
+  left: 50%;
+  width: 4.5rem;
+  height: 1.6rem;
+  transform: translateX(-50%) rotate(-2deg);
+  background: rgba(244, 204, 99, 0.35);
+  border: 1px solid rgba(244, 204, 99, 0.5);
 }
 
 #polaroid-canvas {
-    background: #222;
-    max-width: 450px;
-    height: auto;
-    border: 1px solid #ddd;
+  display: block;
+  width: min(78vw, 22rem);
+  height: auto;
+  aspect-ratio: 4 / 5;
+  background: #000;
+  border-radius: 2px;
 }
 
-.polaroid-caption {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 2.5rem;
-    font-weight: 900;
-    color: #2b2b2b;
-    margin-top: 25px;
-    letter-spacing: 2px;
+.photo-actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
-#save-btn {
-    margin-top: 20px;
-    padding: 12px 30px;
-    font-size: 1rem;
-    background: var(--gold);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
+/* ---------------------------------------------------------------------------
+   7. Screen 5 — Error
+   --------------------------------------------------------------------------- */
+.error-card {
+  max-width: 26rem;
+  width: 100%;
+  text-align: center;
+  background: var(--ink-card);
+  border: 1px solid rgba(161, 59, 77, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem 2rem;
+  box-shadow: var(--shadow-card);
+}
+.error-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.4rem;
+  color: var(--ribbon);
+  margin-bottom: 0.6rem;
+}
+.error-message {
+  font-size: 0.92rem;
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin-bottom: 1.75rem;
 }
 
-.hidden {
-    display: none !important;
+/* ---------------------------------------------------------------------------
+   8. Keyframes
+   --------------------------------------------------------------------------- */
+@keyframes cap-toss {
+  0%, 100% { transform: translateY(0) rotate(-8deg); }
+  50% { transform: translateY(-14px) rotate(8deg); }
 }
 
-@keyframes pulse {
-    from { transform: scale(0.98); text-shadow: 0 0 10px rgba(0,0,0,0.8); }
-    to { transform: scale(1.02); text-shadow: 0 0 20px var(--gold), 0 0 30px var(--gold); }
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(244, 204, 99, 0.55); }
+  70% { box-shadow: 0 0 0 12px rgba(244, 204, 99, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(244, 204, 99, 0); }
+}
+
+@keyframes shutter-flash {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+@keyframes polaroid-drop {
+  0% { opacity: 0; transform: rotate(-2.5deg) translateY(-18px) scale(0.96); }
+  100% { opacity: 1; transform: rotate(-2.5deg) translateY(0) scale(1); }
+}
+
+/* ---------------------------------------------------------------------------
+   9. Responsive
+   --------------------------------------------------------------------------- */
+@media (max-width: 600px) {
+  .start-card { padding: 2.25rem 1.5rem 2rem; }
+  .stage-progress { top: 7.25rem; gap: 1.9rem; }
+  .prompt-banner { padding: 0.7rem 1.4rem; }
+  .hud-controls { gap: 0.6rem; }
+  .icon-btn { width: 2.6rem; height: 2.6rem; font-size: 1rem; }
+  #polaroid-canvas { width: 74vw; }
+}
+
+@media (max-height: 640px) and (orientation: landscape) {
+  .stage-progress { top: 6rem; gap: 1.6rem; }
+  .no-person-hint { bottom: 5rem; }
+}
+
+/* ---------------------------------------------------------------------------
+   10. Motion & accessibility
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .cap-spinner { animation: none; }
+  .dot.active::before { animation: none; box-shadow: 0 0 0 3px rgba(244, 204, 99, 0.5); }
+  .polaroid { animation: none; }
+  .screen { transition: none; }
+  #camera-flash.flash-active { animation-duration: 0.01ms; }
 }
