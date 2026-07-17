@@ -1,41 +1,170 @@
 <!DOCTYPE html>
+<!--
+  =============================================================================
+  GraduATE — a clap-and-dance gesture game for new graduates.
+
+  File layout this project expects (all siblings in one folder):
+    index.html        <- you are here
+    style.css
+    game.js            <- state machine, canvas rendering, confetti, photo capture
+    bodytracking.js     <- MediaPipe webcam + gesture tracking (imported by game.js)
+    Assets/
+      Cap.png
+      Gown.png
+      Degree.png
+
+  Nothing in here talks to MediaPipe directly — this file just lays out the
+  screens and hands game.js a handful of ids/classes to drive. The whole
+  camera + costume + confetti scene is drawn onto a single <canvas> so a
+  photo capture is just "snapshot the canvas," no separate compositing step.
+  =============================================================================
+-->
 <html lang="en">
 <head>
-   <!-- Replace the MediaPipe script tags in your index.html with these: -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>GraduATE — Clap, Cap, Dance</title>
+  <meta name="description" content="A gesture-controlled graduation celebration. Clap to earn your gown, cap, and degree, then dance for the confetti — right from your webcam." />
+  <link rel="icon" href="Assets/Cap.png" />
+
+  <!-- Fraunces (display serif with character) + Caveat (script accent, for the "graduATE" wordmark)
+       + Manrope (clean UI/body sans). Deliberately not Playfair/Inter — see style.css for the full token system. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,600&family=Caveat:wght@600;700&family=Manrope:wght@400;500;700;800&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <noscript>
+    <div class="noscript-banner">GraduATE needs JavaScript (and a webcam) to run. Please enable JavaScript and reload.</div>
+  </noscript>
 
-    <div id="game-container">
-        <!-- Live Action Streams -->
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="output-canvas"></canvas>
+  <div id="app">
 
-        <!-- Prompt Layer -->
-        <div id="ui-overlay">
-            <h1 id="instruction-text">Loading Assets...</h1>
+    <!-- ===================================================================
+         SCREEN 1 — Start
+         =================================================================== -->
+    <section id="screen-start" class="screen active" aria-label="Start screen">
+      <div class="start-card">
+        <p class="eyebrow">a webcam graduation ritual</p>
+        <h1 class="wordmark">gradu<span class="ate">ATE</span></h1>
+        <p class="start-copy">
+          Step in front of your camera. Clap to earn your gown, your cap, and your degree —
+          then dance it out while the confetti falls.
+        </p>
+
+        <ul class="start-steps" aria-hidden="true">
+          <li><span class="step-num">1</span>Clap for your gown</li>
+          <li><span class="step-num">2</span>Clap for your cap</li>
+          <li><span class="step-num">3</span>Clap for your degree</li>
+          <li><span class="step-num">4</span>Dance for the confetti</li>
+        </ul>
+
+        <button id="btn-start" class="btn btn-primary" type="button">
+          Turn on camera &amp; begin
+        </button>
+        <p class="privacy-note">Your camera feed stays on this device — nothing is uploaded.</p>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         SCREEN 2 — Camera / model loading
+         =================================================================== -->
+    <section id="screen-loading" class="screen" aria-label="Loading">
+      <div class="loading-card">
+        <div class="cap-spinner" aria-hidden="true"></div>
+        <p id="loading-message">Waking up your camera&hellip;</p>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         SCREEN 3 — Live game stage
+         =================================================================== -->
+    <section id="screen-game" class="screen" aria-label="Game in progress">
+      <div id="stage">
+
+        <!-- Source video: never shown directly, only used as a pixel source.
+             Kept playing (not display:none) so browsers don't throttle its frames. -->
+        <video id="webcam" class="source-video" autoplay playsinline muted></video>
+
+        <!-- Everything the player actually sees: mirrored camera + gown/cap/degree
+             + confetti/balloons, all composited here frame by frame by game.js. -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- Flash element for the photo-capture "shutter" effect -->
+        <div id="camera-flash" aria-hidden="true"></div>
+
+        <!-- HUD: top prompt banner -->
+        <div class="hud hud-top">
+          <div id="prompt-banner" class="prompt-banner">
+            <span id="prompt-text" aria-live="polite">Step into frame</span>
+            <span id="prompt-hint">Make sure your shoulders and hands are visible</span>
+          </div>
         </div>
 
-        <!-- Snap Interaction Action Button -->
-        <button id="capture-btn" class="hidden">Capture Polaroid 📸</button>
-    </div>
+        <!-- HUD: stage progress dots -->
+        <ol id="stage-progress" class="stage-progress" aria-label="Ceremony progress">
+          <li class="dot" data-stage="gown"><span>Gown</span></li>
+          <li class="dot" data-stage="cap"><span>Cap</span></li>
+          <li class="dot" data-stage="degree"><span>Degree</span></li>
+          <li class="dot" data-stage="dance"><span>Dance</span></li>
+        </ol>
 
-    <!-- Polaroid Render Popup -->
-    <div id="polaroid-modal" class="hidden">
-        <div class="modal-content">
-            <span id="close-modal">&times;</span>
-            <div id="polaroid-wrapper">
-                <canvas id="polaroid-canvas"></canvas>
-                <div class="polaroid-caption">graduATE</div>
-            </div>
-            <button id="save-btn">Save to Device 💾</button>
+        <!-- HUD: no-person-in-frame warning, toggled by game.js -->
+        <div id="no-person-hint" class="no-person-hint" role="status">
+          We can't see you fully — step back a little
         </div>
-    </div>
 
-    <!-- Application Script Bindings -->
-    <script src="bodytracking.js"></script>
-    <script src="game.js"></script>
+        <!-- HUD: bottom-right controls -->
+        <div class="hud hud-controls">
+          <button id="btn-mute" class="icon-btn" type="button" aria-pressed="false" title="Toggle sound">
+            <span class="icon-on">&#128266;</span>
+            <span class="icon-off">&#128263;</span>
+          </button>
+          <button id="btn-restart" class="icon-btn" type="button" title="Restart ceremony">&#8635;</button>
+          <button id="btn-photo" class="icon-btn icon-btn-primary" type="button" title="Take your photo" hidden>
+            &#128247;
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         SCREEN 4 — Polaroid photo result
+         =================================================================== -->
+    <section id="screen-photo" class="screen" aria-label="Your photo">
+      <div class="photo-wrap">
+        <div class="polaroid" id="polaroid">
+          <!-- game.js draws the full frame (video snapshot + costume + confetti + caption) onto this canvas -->
+          <canvas id="polaroid-canvas"></canvas>
+        </div>
+
+        <div class="photo-actions">
+          <a id="btn-download" class="btn btn-primary" href="#" download="graduate-photo.png">Save photo</a>
+          <button id="btn-retake" class="btn btn-secondary" type="button">Back to celebration</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         SCREEN 5 — Error / fallback
+         =================================================================== -->
+    <section id="screen-error" class="screen" aria-label="Something went wrong">
+      <div class="error-card">
+        <p class="error-title">We couldn't start the camera</p>
+        <p id="error-message" class="error-message">
+          Check that you've allowed camera access for this site, then try again.
+        </p>
+        <button id="btn-retry" class="btn btn-primary" type="button">Try again</button>
+      </div>
+    </section>
+
+  </div>
+
+  <script type="module" src="game.js"></script>
 </body>
 </html>
