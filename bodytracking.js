@@ -102,12 +102,12 @@ const TUNING = {
 
   // --- Dance detection ---
   // Rolling time window (ms) used to measure how much the body is moving.
-  DANCE_WINDOW_MS: 900,
-  DANCE_ENTER_ENERGY: 0.055,
-  DANCE_EXIT_ENERGY: 0.03,
+  DANCE_WINDOW_MS: 700,
+  DANCE_ENTER_ENERGY: 0.02,
+  DANCE_EXIT_ENERGY: 0.009,
   // Must stay above/below the enter/exit threshold for this long to flip
   // state, so a single big jitter doesn't flicker isDancing on/off.
-  DANCE_STATE_HOLD_MS: 350,
+  DANCE_STATE_HOLD_MS: 220,
 };
 
 // ---------------------------------------------------------------------------
@@ -451,26 +451,20 @@ export class BodyTracker {
     }
   }
 
-  /** Sum of frame-to-frame displacement across key limbs, averaged over a rolling time window. */
+  /** Largest single-landmark frame-to-frame displacement among the most
+   *  expressive points (wrists/elbows/nose), averaged over a rolling time
+   *  window. Deliberately NOT an average across shoulders/hips too — those
+   *  barely move during ordinary arm-and-hand dancing and would dilute the
+   *  signal to the point that real dancing never crosses the threshold. */
   _updateMotionEnergy(lm, timestamp) {
-    const trackedIdx = [
-      PL.LEFT_WRIST,
-      PL.RIGHT_WRIST,
-      PL.LEFT_ELBOW,
-      PL.RIGHT_ELBOW,
-      PL.LEFT_SHOULDER,
-      PL.RIGHT_SHOULDER,
-      PL.LEFT_HIP,
-      PL.RIGHT_HIP,
-      PL.NOSE,
-    ];
+    const trackedIdx = [PL.LEFT_WRIST, PL.RIGHT_WRIST, PL.LEFT_ELBOW, PL.RIGHT_ELBOW, PL.NOSE];
 
     let frameEnergy = 0;
     if (this._prevLandmarksForMotion) {
       for (const idx of trackedIdx) {
-        frameEnergy += dist(lm[idx], this._prevLandmarksForMotion[idx]);
+        const d = dist(lm[idx], this._prevLandmarksForMotion[idx]);
+        if (d > frameEnergy) frameEnergy = d;
       }
-      frameEnergy /= trackedIdx.length;
     }
     this._prevLandmarksForMotion = lm;
 
