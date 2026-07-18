@@ -147,7 +147,7 @@ const BALLOON_INTERVAL_SEC = 0.85;
 const BALLOON_MAX = 10;
 const CAP_FALL_INTERVAL_SEC = 2.1;
 const CAP_FALL_MAX = 6;
-const DANCE_BURST_ENERGY = 0.09;
+const DANCE_BURST_ENERGY = 0.035;
 const DANCE_BURST_COOLDOWN_MS = 450;
 
 const CONFETTI_COLORS = ["#d6a53a", "#f4cc63", "#b8862b", "#171018", "#171018"];
@@ -177,6 +177,7 @@ let audioCtx = null;
 
 let gameActive = false; // true only while the live game screen should render/track
 let isStarting = false; // guards beginExperience() against re-entrant calls
+let lastVideoFit = null; // {offsetX, offsetY, drawW, drawH} of the video within the canvas, CSS-px space
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let lastFrameTime = performance.now();
 let lastDanceBurstTime = 0;
@@ -269,9 +270,12 @@ function resizeCanvasToStage() {
   els.canvas.style.height = h + "px";
 }
 
-/** Object-fit:cover math — maps a vw x vh source onto a cw x ch destination, centered. */
-function computeCoverFit(cw, ch, vw, vh) {
-  const scale = Math.max(cw / vw, ch / vh);
+/** Object-fit:contain math — maps a vw x vh source onto a cw x ch destination,
+ *  centered, showing the WHOLE source (letterboxed) rather than cropping it
+ *  to fill — this is what keeps the player's whole body in frame instead of
+ *  the view "zooming in" to whichever axis is tightest. */
+function computeVideoFit(cw, ch, vw, vh) {
+  const scale = Math.min(cw / vw, ch / vh);
   const drawW = vw * scale;
   const drawH = vh * scale;
   return {
@@ -282,21 +286,34 @@ function computeCoverFit(cw, ch, vw, vh) {
   };
 }
 
-/** Maps a normalized (0..1) MediaPipe point into on-screen pixel space via the current cover fit. */
+/** Maps a normalized (0..1) MediaPipe point into on-screen pixel space via the current video fit. */
 function toScreen(p, fit) {
   return { x: fit.offsetX + p.x * fit.drawW, y: fit.offsetY + p.y * fit.drawH };
 }
 
-/** Crops `source` (any canvas) to cover a destW x destH box inside destCtx, centered. Reused for both the live preview and the exported Polaroid. */
-function drawCoverFitCanvasSource(destCtx, source, destW, destH, destOffsetX = 0, destOffsetY = 0) {
-  const sw = source.width;
-  const sh = source.height;
-  const scale = Math.max(destW / sw, destH / sh);
-  const drawW = sw * scale;
-  const drawH = sh * scale;
+/** Crops an explicit source rectangle from `source` (any canvas) to cover a
+ *  destW x destH box inside destCtx, centered. Used for Polaroid capture so
+ *  we crop only the actual camera content, never the letterbox bars. */
+function drawCoverFitRegion(destCtx, source, srcRect, destW, destH, destOffsetX = 0, destOffsetY = 0) {
+  const scale = Math.max(destW / srcRect.w, destH / srcRect.h);
+  const drawW = srcRect.w * scale;
+  const drawH = srcRect.h * scale;
   const ox = destOffsetX + (destW - drawW) / 2;
   const oy = destOffsetY + (destH - drawH) / 2;
-  destCtx.drawImage(source, ox, oy, drawW, drawH);
+  destCtx.drawImage(source, srcRect.x, srcRect.y, srcRect.w, srcRect.h, ox, oy, drawW, drawH);
+}
+
+/** The last drawn video region (CSS-pixel canvas space) converted to the
+ *  canvas's actual backing-store pixels, for cropping just the camera
+ *  content out of #game-canvas (never the black letterbox bars). */
+function videoRegionInBackingPixels() {
+  if (!lastVideoFit) return { x: 0, y: 0, w: els.canvas.width, h: els.canvas.height };
+  return {
+    x: lastVideoFit.offsetX * dpr,
+    y: lastVideoFit.offsetY * dpr,
+    w: lastVideoFit.drawW * dpr,
+    h: lastVideoFit.drawH * dpr,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -355,11 +372,31 @@ function drawFittedImage(destCtx, img, opts) {
   destCtx.restore();
 }
 
+/** A soft, multiply-blended shadow under a costume piece's contact point —
+ *  darkens the actual video pixels underneath (rather than pasting a flat
+ *  shape on top), which is a cheap but real way to make a 2D sprite read as
+ *  "resting on" the body instead of floating in front of it. */
+function drawContactShadow(destCtx, x, y, rx, ry, opacity, alpha = 1) {
+  if (alpha <= 0) return;
+  destCtx.save();
+  destCtx.globalAlpha = alpha;
+  destCtx.globalCompositeOperation = "multiply";
+  const grad = destCtx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+  grad.addColorStop(0, `rgba(20,16,10,${opacity})`);
+  grad.addColorStop(1, "rgba(20,16,10,0)");
+  destCtx.fillStyle = grad;
+  destCtx.beginPath();
+  destCtx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  destCtx.fill();
+  destCtx.restore();
+}
+
 function drawGown(destCtx, body, img) {
   const t = easeOutCubic(animProgress(gownAppearedAt, 550));
   const growth = 0.85 + 0.15 * t;
   const targetSpan = body.shoulderWidth * GOWN_WIDTH_MULTIPLIER * growth;
   const scale = targetSpan / (img.naturalWidth * GOWN_CAL.shoulderSpanFraction);
+  drawContactShadow(destCtx, body.shoulderMid.x, body.shoulderMid.y, body.shoulderWidth * 0.55, body.shoulderWidth * 0.22, 0.35, t);
   drawFittedImage(destCtx, img, {
     x: body.shoulderMid.x,
     y: body.shoulderMid.y,
@@ -380,6 +417,9 @@ function drawCapAnimated(destCtx, body, img) {
   const wobble = (1 - bounce) * 0.6;
   const targetWidth = body.headWidth * CAP_WIDTH_MULTIPLIER;
   const scale = targetWidth / (img.naturalWidth * CAP_CAL.headOpeningWidthFraction);
+  // Shadow only appears once the cap has essentially landed — while it's still
+  // mid-fall there's nothing underneath it yet for a contact shadow to make sense.
+  drawContactShadow(destCtx, body.crownPoint.x, body.crownPoint.y, body.headWidth * 0.5, body.headWidth * 0.18, 0.3, bounce);
   drawFittedImage(destCtx, img, {
     x: body.crownPoint.x,
     y: body.crownPoint.y + yOffset,
@@ -637,7 +677,8 @@ function renderLoop(now) {
 
   const video = tracker?.video;
   if (video && video.videoWidth) {
-    const fit = computeCoverFit(stageSize.w, stageSize.h, video.videoWidth, video.videoHeight);
+    const fit = computeVideoFit(stageSize.w, stageSize.h, video.videoWidth, video.videoHeight);
+    lastVideoFit = fit;
 
     // Mirrored camera frame (flip scoped locally; overlay math below needs no
     // flip of its own since bodytracking.js's landmarks are already mirrored).
@@ -673,7 +714,7 @@ function grantSparklePoint(stage) {
   let x = stageSize.w / 2;
   let y = stageSize.h / 2;
   if (latestFrame?.landmarks && tracker?.video?.videoWidth) {
-    const fit = computeCoverFit(stageSize.w, stageSize.h, tracker.video.videoWidth, tracker.video.videoHeight);
+    const fit = computeVideoFit(stageSize.w, stageSize.h, tracker.video.videoWidth, tracker.video.videoHeight);
     const body = computeBody(latestFrame.landmarks, fit);
     if (stage === "gown") ({ x, y } = body.shoulderMid);
     else if (stage === "cap") ({ x, y } = body.crownPoint);
@@ -743,6 +784,7 @@ function handleTrackerUpdate(frame) {
 
   if (frame.hasPerson && !personEverSeen) {
     personEverSeen = true;
+    els.btnPhoto.hidden = false;
     updateStageUI();
   }
 
@@ -866,7 +908,7 @@ function renderPolaroidPreview() {
   els.polaroidCanvas.width = w;
   els.polaroidCanvas.height = h;
   const pctx = els.polaroidCanvas.getContext("2d");
-  drawCoverFitCanvasSource(pctx, els.canvas, w, h);
+  drawCoverFitRegion(pctx, els.canvas, videoRegionInBackingPixels(), w, h);
 }
 
 async function renderPolaroidExport() {
@@ -886,7 +928,7 @@ async function renderPolaroidExport() {
   ectx.beginPath();
   ectx.rect(POLAROID_EXPORT_BORDER, POLAROID_EXPORT_BORDER, POLAROID_EXPORT_PHOTO_SIZE, POLAROID_EXPORT_PHOTO_SIZE);
   ectx.clip();
-  drawCoverFitCanvasSource(ectx, els.canvas, POLAROID_EXPORT_PHOTO_SIZE, POLAROID_EXPORT_PHOTO_SIZE, POLAROID_EXPORT_BORDER, POLAROID_EXPORT_BORDER);
+  drawCoverFitRegion(ectx, els.canvas, videoRegionInBackingPixels(), POLAROID_EXPORT_PHOTO_SIZE, POLAROID_EXPORT_PHOTO_SIZE, POLAROID_EXPORT_BORDER, POLAROID_EXPORT_BORDER);
   ectx.restore();
 
   ectx.strokeStyle = "rgba(0,0,0,0.15)";
