@@ -69,7 +69,7 @@ const PL = {
   LEFT_EYE: 2,
   RIGHT_EYE: 5,
   LEFT_EAR: 7,
-  RIGHT_EAR: 9,
+  RIGHT_EAR: 8,
   LEFT_SHOULDER: 11,
   RIGHT_SHOULDER: 12,
   LEFT_ELBOW: 13,
@@ -157,6 +157,14 @@ export class BodyTracker {
 
   /** Requests the camera and loads the MediaPipe pose model. Call once before start(). */
   async init() {
+    // Defensive: if this instance already holds a stream (e.g. init() called
+    // twice on the same tracker), release it first rather than requesting a
+    // second concurrent stream from the same device.
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    }
+
     try {
       const vision = await FilesetResolver.forVisionTasks(VISION_WASM_ROOT);
       this.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
@@ -189,14 +197,7 @@ export class BodyTracker {
     }
 
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
+      this.stream = await this._acquireCameraStream();
     } catch (camErr) {
       this._fail(camErr);
       throw camErr;
@@ -269,6 +270,33 @@ export class BodyTracker {
   _fail(err) {
     console.error("[BodyTracker]", err);
     this.callbacks.onError?.(err);
+  }
+
+  /**
+   * Requests the camera, falling back to progressively plainer constraints.
+   * Some webcam drivers throw NotReadableError on a specific facingMode +
+   * exact-resolution request even when the device is completely free — the
+   * same device works fine for other requests with looser constraints. We
+   * try the nice request first (mirrors what we actually want) and fall
+   * back only if the browser/driver rejects it.
+   */
+  async _acquireCameraStream() {
+    const attempts = [
+      { video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+      { video: { facingMode: "user" }, audio: false },
+      { video: true, audio: false },
+    ];
+
+    let lastErr = null;
+    for (const constraints of attempts) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        lastErr = err;
+        console.warn("[BodyTracker] camera request failed, trying a simpler constraint set", constraints, err.name, err.message);
+      }
+    }
+    throw lastErr;
   }
 
   _processFrame() {
