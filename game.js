@@ -176,6 +176,7 @@ let muted = false;
 let audioCtx = null;
 
 let gameActive = false; // true only while the live game screen should render/track
+let isStarting = false; // guards beginExperience() against re-entrant calls
 let dpr = Math.min(window.devicePixelRatio || 1, 2);
 let lastFrameTime = performance.now();
 let lastDanceBurstTime = 0;
@@ -953,6 +954,9 @@ function showError(message) {
 }
 
 async function beginExperience() {
+  if (isStarting) return; // guards against a double-click firing two overlapping camera requests
+  isStarting = true;
+
   showScreen("loading");
   els.loadingMessage.textContent = "Waking up your camera & loading motion tracking\u2026";
   ensureAudio();
@@ -962,6 +966,7 @@ async function beginExperience() {
     if (!assets) assets = await loadAssets();
   } catch (err) {
     showError("We couldn't load the costume artwork. Make sure the Assets folder sits next to index.html.");
+    isStarting = false;
     return;
   }
 
@@ -982,12 +987,14 @@ async function beginExperience() {
     await tracker.init();
   } catch (err) {
     showError(describeCameraError(err));
+    isStarting = false;
     return;
   }
 
   resetGameState();
   tracker.start();
   gameActive = true;
+  isStarting = false;
   showScreen("game");
 }
 
